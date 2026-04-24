@@ -21,28 +21,36 @@ class QuadNode:
 
 def load_image_from_bytes(file_bytes: bytes) -> np.ndarray:
     image = Image.open(io.BytesIO(file_bytes)).convert("L")
+    max_dimension = 512
+    width, height = image.size
+    largest_side = max(width, height)
+    if largest_side > max_dimension:
+        scale = max_dimension / float(largest_side)
+        new_size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
     return np.array(image, dtype=np.uint8)
 
 
 def wavelet_smooth(image_array: np.ndarray, wavelet_name: str, level: int, detail_scale: float) -> np.ndarray:
     image_float = image_array.astype(np.float32)
-    coeffs = pywt.wavedec2(image_float, wavelet=wavelet_name, level=level)
+    coeffs = pywt.wavedec2(image_float, wavelet=wavelet_name, level=level, mode="periodization")
 
     adjusted_coeffs = [coeffs[0]]
     for details in coeffs[1:]:
         adjusted_coeffs.append(tuple(detail_scale * component for component in details))
 
-    reconstructed = pywt.waverec2(adjusted_coeffs, wavelet=wavelet_name)
+    reconstructed = pywt.waverec2(adjusted_coeffs, wavelet=wavelet_name, mode="periodization")
     reconstructed = reconstructed[: image_array.shape[0], : image_array.shape[1]]
     reconstructed = np.clip(reconstructed, 0, 255)
     return reconstructed.astype(np.uint8)
 
 
 def split_condition(block: np.ndarray, threshold: float, min_block_size: int) -> bool:
+    std_value = float(np.std(block))
     return (
         block.shape[0] >= 2 * min_block_size
         and block.shape[1] >= 2 * min_block_size
-        and np.std(block) > threshold
+        and std_value > threshold
     )
 
 
@@ -109,7 +117,7 @@ def overlay_boundaries(image_array: np.ndarray, labels: np.ndarray) -> np.ndarra
 
 def kmeans_segment(image_array: np.ndarray, n_clusters: int) -> Tuple[np.ndarray, np.ndarray]:
     flattened = image_array.reshape(-1, 1).astype(np.float32)
-    model = KMeans(n_clusters=n_clusters, n_init=10, random_state=42)
+    model = KMeans(n_clusters=n_clusters, init="k-means++", n_init=10, random_state=42)
     labels = model.fit_predict(flattened)
     centers = model.cluster_centers_.flatten()
     segmented = centers[labels].reshape(image_array.shape)
@@ -118,15 +126,17 @@ def kmeans_segment(image_array: np.ndarray, n_clusters: int) -> Tuple[np.ndarray
 
 
 def compute_mean_region_variance(image_array: np.ndarray, labels: np.ndarray) -> float:
-    variances: List[float] = []
+    weighted_variance_sum = 0.0
+    total_pixels = 0
     for label in np.unique(labels):
         region_pixels = image_array[labels == label]
         if region_pixels.size == 0:
             continue
-        variances.append(float(np.var(region_pixels)))
-    if not variances:
+        weighted_variance_sum += float(np.var(region_pixels)) * int(region_pixels.size)
+        total_pixels += int(region_pixels.size)
+    if total_pixels == 0:
         return 0.0
-    return float(np.mean(variances))
+    return float(weighted_variance_sum / total_pixels)
 
 
 def compare_segmentations(results: Dict[str, np.ndarray]) -> Dict[str, float]:
