@@ -39,7 +39,11 @@ def wavelet_smooth(image_array: np.ndarray, wavelet_name: str, level: int, detai
 
 
 def split_condition(block: np.ndarray, threshold: float, min_block_size: int) -> bool:
-    return block.shape[0] >= min_block_size and block.shape[1] >= min_block_size and np.std(block) > threshold
+    return (
+        block.shape[0] >= 2 * min_block_size
+        and block.shape[1] >= 2 * min_block_size
+        and np.std(block) > threshold
+    )
 
 
 def quadtree_decompose(
@@ -146,7 +150,11 @@ def compare_segmentations(results: Dict[str, np.ndarray]) -> Dict[str, float]:
 
 def difference_heatmap(quadtree_image: np.ndarray, kmeans_image: np.ndarray) -> np.ndarray:
     difference = np.abs(quadtree_image.astype(np.int16) - kmeans_image.astype(np.int16)).astype(np.uint8)
-    normalized = difference.astype(np.float32) / 255.0
+    max_difference = float(np.max(difference))
+    if max_difference == 0:
+        normalized = np.zeros_like(difference, dtype=np.float32)
+    else:
+        normalized = difference.astype(np.float32) / max_difference
     colored = plt.cm.inferno(normalized)[..., :3]
     return (colored * 255).astype(np.uint8)
 
